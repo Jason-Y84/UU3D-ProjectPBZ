@@ -93,6 +93,9 @@ tag = "70db095765ab2066dd88dfb7bbcc42259ed167c5"
 [fetch-content.kananlib]
 git = "https://github.com/cursey/kananlib"
 tag = "49fdf2d3b1db350e370beacb607d5721bc2911ad"
+cmake-after = """
+include(cmake/KananlibDecodeWindow.cmake)
+"""
 
 [fetch-content.sdkgenny]
 git = "https://github.com/cursey/sdkgenny"
@@ -221,6 +224,41 @@ add_test(NAME build-metadata-tests COMMAND powershell -NoProfile -NonInteractive
 set_tests_properties(build-metadata-tests PROPERTIES TIMEOUT 120)
 """
 
+[target.steam-frame-input-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/SteamFrameInputTests.cpp"]
+include-directories = ["src/"]
+compile-features = ["cxx_std_23"]
+link-libraries = ["nlohmann_json"]
+cmake-after = """
+add_test(NAME steam-frame-input-tests COMMAND steam-frame-input-tests "${CMAKE_CURRENT_SOURCE_DIR}")
+set_tests_properties(steam-frame-input-tests PROPERTIES TIMEOUT 30)
+"""
+
+[target.stock-frame-migration-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/StockFrameMigrationTests.cpp"]
+include-directories = ["src/"]
+compile-features = ["cxx_std_23"]
+link-libraries = ["nlohmann_json"]
+cmake-after = """
+add_test(NAME stock-frame-migration-tests COMMAND stock-frame-migration-tests)
+set_tests_properties(stock-frame-migration-tests PROPERTIES TIMEOUT 30)
+"""
+
+[target.gamepad-recovery-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/GamepadRecoveryTests.cpp"]
+include-directories = ["src/"]
+compile-features = ["cxx_std_23"]
+cmake-after = """
+add_test(NAME gamepad-recovery-tests COMMAND gamepad-recovery-tests "${CMAKE_CURRENT_SOURCE_DIR}")
+set_tests_properties(gamepad-recovery-tests PROPERTIES TIMEOUT 30)
+"""
+
 [target.diagnostic-safety-tests]
 condition = "compatibility-policy-tests"
 type = "executable"
@@ -230,6 +268,24 @@ compile-features = ["cxx_std_23"]
 link-libraries = ["nlohmann_json", "spdlog", "uesdk", "Version", "imgui"]
 cmake-after = """
 add_test(NAME diagnostic-safety-tests COMMAND diagnostic-safety-tests)
+"""
+
+[target.kananlib-decode-window-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/KananlibDecodeWindowTests.cpp"]
+compile-features = ["cxx_std_23"]
+compile-options = ["/EHa"]
+link-libraries = ["kananlib"]
+cmake-after = """
+add_test(NAME kananlib-decode-window-tests COMMAND kananlib-decode-window-tests)
+set_tests_properties(kananlib-decode-window-tests PROPERTIES TIMEOUT 60)
+add_test(NAME kananlib-decode-window-configuration-tests COMMAND "${CMAKE_COMMAND}"
+    "-DUEVR_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DKANANLIB_SOURCE_DIR=${kananlib_SOURCE_DIR}"
+    "-DUEVR_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/kananlib-decode-window/configuration-fixture"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/KananlibBackportConfigurationTests.cmake")
+set_tests_properties(kananlib-decode-window-configuration-tests PROPERTIES TIMEOUT 120)
 """
 
 [target.hifi-hook-memory-tests]
@@ -266,6 +322,30 @@ link-libraries = ["safetyhook"]
 cmake-after = """
 add_test(NAME input-hook-installation-tests COMMAND input-hook-installation-tests)
 set_tests_properties(input-hook-installation-tests PROPERTIES TIMEOUT 60)
+"""
+
+[target.stalker2-native-policy-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/Stalker2NativePolicyTests.cpp"]
+include-directories = ["src/"]
+compile-features = ["cxx_std_23"]
+link-libraries = ["nlohmann_json"]
+cmake-after = """
+add_test(NAME stalker2-native-policy-tests COMMAND stalker2-native-policy-tests)
+set_tests_properties(stalker2-native-policy-tests PROPERTIES TIMEOUT 30)
+"""
+
+[target.stalker2-native-d3d12-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/Stalker2NativeD3D12Tests.cpp"]
+include-directories = ["src/"]
+compile-features = ["cxx_std_23"]
+link-libraries = ["d3d12", "dxgi", "openxr_loader"]
+cmake-after = """
+add_test(NAME stalker2-native-d3d12-tests COMMAND stalker2-native-d3d12-tests)
+set_tests_properties(stalker2-native-d3d12-tests PROPERTIES TIMEOUT 30)
 """
 
 [target.vr-plugin-nullifier]
@@ -327,6 +407,42 @@ LIBRARY_OUTPUT_DIRECTORY_RELEASE = "${CMAKE_BINARY_DIR}/lib/${CMKR_TARGET}"
 LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO = "${CMAKE_BINARY_DIR}/lib/${CMKR_TARGET}"
 ARCHIVE_OUTPUT_DIRECTORY_RELEASE = "${CMAKE_BINARY_DIR}/lib/${CMKR_TARGET}"
 ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO = "${CMAKE_BINARY_DIR}/lib/${CMKR_TARGET}"
+
+[target.lua-fname-binding-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/LuaFNameBindingTests.cpp"]
+link-libraries = ["luavrlib"]
+cmake-after = """
+add_test(NAME lua-fname-bindings-8 COMMAND lua-fname-binding-tests 8)
+add_test(NAME lua-fname-bindings-12 COMMAND lua-fname-binding-tests 12)
+add_test(NAME lua-fname-bindings-legacy COMMAND lua-fname-binding-tests 8 legacy)
+set_tests_properties(lua-fname-bindings-8 lua-fname-bindings-12 lua-fname-bindings-legacy PROPERTIES TIMEOUT 60)
+"""
+
+[target.lua-context-dispatch-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/LuaContextDispatchTests.cpp"]
+link-libraries = ["luavrlib"]
+cmake-after = """
+foreach(case IN ITEMS reentry lock-order membership lifetime reset owner-reset queued-reset owner-retirement owned-state-teardown borrowed-state-teardown stress)
+    add_test(NAME lua-context-dispatch-${case} COMMAND lua-context-dispatch-tests ${case})
+    set_tests_properties(lua-context-dispatch-${case} PROPERTIES TIMEOUT 20)
+endforeach()
+"""
+
+[target.lua-controller-input-tests]
+condition = "compatibility-policy-tests"
+type = "executable"
+sources = ["tests/LuaControllerInputTests.cpp"]
+link-libraries = ["luavrlib"]
+cmake-after = """
+foreach(case IN ITEMS native openxr-sources legacy missing)
+    add_test(NAME lua-controller-input-${case} COMMAND lua-controller-input-tests ${case} "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(lua-controller-input-${case} PROPERTIES TIMEOUT 30)
+endforeach()
+"""
 
 [template.ue4template]
 type = "shared"
