@@ -10,6 +10,66 @@ root, Modern under `modern\`), so entries apply to both unless a heading says
 otherwise. Earlier nightlies were a single build, alternating between the two
 bases depending on which branch produced them.
 
+## Nightly 00050
+
+Also covers **00048** and **00049**, which shipped without a changelog entry.
+Both carried the crosshair activation below.
+
+### Added
+- **Turn the crosshair on with a key or mouse button** (from 00048,
+  contributed by Vic Lee). Under the 3D Display crosshair settings, *Key
+  Activated* and *Mouse Activated* each take `Off`, `Hold` or `Toggle`. With
+  either one set, the Game Crosshair depth or Laser Sight only shows while the
+  button is held (Hold) or after a press switches it on (Toggle). That lets you
+  keep it for aiming and drop it the rest of the time. The *Crosshair Key*
+  defaults to the gamepad's **left trigger** (the usual aim button) and can be
+  rebound to any keyboard key or gamepad button. *Mouse Button* picks right,
+  middle or left. With both left at `Off` the crosshair is always on, as before.
+  Presses are ignored while the UU3D menu is open.
+- **LeiaSR: the panel's own crosstalk cancellation is now adjustable.** At the
+  top of *Ghost Reduction (Crosstalk)*, shown only while LeiaSR is weaving:
+  - *Weaver Crosstalk Mode*: Display Default, Off, Static, or Dynamic (follows
+    your tracked eyes).
+  - *Weaver Crosstalk Strength*: how hard the panel cancels, as a multiple of
+    its own factory value.
+  - *Weaving Contrast*: the weaver's own contrast.
+
+  All three default to the display as shipped, so nothing changes until you
+  move them, and *Display Defaults* puts them back. A good place to start is
+  Strength `1.30` and Weaving Contrast `0.97`. Raising Strength removes more
+  ghosting but clips dark areas, so pair it with *Black Lift*. They are the
+  display's own settings, so they work separately from the Contrast and Black
+  Lift sliders and don't affect 3D screenshots. On an SR runtime too old to
+  offer them, the controls stay hidden.
+
+### Upstream (Modern only)
+The Modern backend merged Joey Hodge's `ue57performance` branch again (31
+upstream commits, 2026-09-30 to 2026-10-11). As before, these target the VR
+path. The renderer, UI-routing and startup parts that UU3D shares may help these
+titles under Flat3D too, but none have been verified in UU3D:
+- *Dune: Awakening* - relocated renderer and frame handoff validation, the
+  constructor eye pair kept through Native Fix startup, missing SmartGI
+  parameters on the second eye repaired. These Native Fix repairs only engage
+  in VR (OpenXR) for now, not under Flat3D.
+- *Star Wars: Zero Company* - support for game build 197649 (Slate, render
+  targets, Nanite/hologram passes, native texture access).
+- *Galactic Racer* - scene, extracted UI, stereo capture and movie routing;
+  separate UI and capture resources; opt-in overlay movie seeking.
+- *Satisfactory* - modular Native Fix with both eye families rendered in one
+  renderer call (Steam and EGS, UE 5.6.1).
+- *The Outer Worlds 2* - bounded UObject tracking and guarded component reads.
+- *Minecraft Dungeons (UE 5.6.1)* - DX12 Slate routed to the dedicated UI.
+- *Townfall* - console discovery after the game's update.
+- *Hellraiser (UE 5.6.1)* - validated Native Fix capture resource.
+- *S.T.A.L.K.E.R. 2* - an opt-in Native Fix transaction pairing experiment (VR
+  texture-array submit only).
+- Engine-wide: UE 5.8 object discovery and dedicated UI in stats-enabled
+  builds, PostInitProperties validation, Native Fix capture components
+  finished once after configuration, and a Kananlib readable-page fix for
+  signature scans. Also VR-only input work that does nothing under Flat3D:
+  Steam Frame controller support, Quest Touch defaults, gamepad recovery, and
+  Lua input/FName binding fixes.
+
 ## Nightly 00047
 
 ### Added
