@@ -270,6 +270,7 @@ uint64_t steady_clock_milliseconds() noexcept {
 }
 
 constexpr uint64_t SCENE_CAPTURE_FAILED_RETRY_DELAY_MS = 500;
+constexpr uint32_t SCENE_CAPTURE_FAILED_RETRY_MAX_DOUBLINGS = 3;
 
 template <typename T, size_t Capacity>
 class FixedCapacityList {
@@ -25014,6 +25015,7 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
             g_hook->m_sceneview_data.native_stereo_stable_frames = 0;
         }
         rtm->destroy_scene_capture();
+        rtm->reset_scene_capture_retry();
 
         if (!split_screen_enabled) {
             std::scoped_lock lock{g_hook->m_sceneview_data.mtx};
@@ -40040,6 +40042,16 @@ bool VRRenderTargetManager_Base::publish_scene_capture_target_snapshot(
     }
 
     bool resource_valid = false;
+    // Reported by the refusal warning below.
+    struct {
+        uint32_t format{};
+        uint64_t width{};
+        uint32_t height{};
+        uint32_t mips{};
+        uint32_t array{};
+        uint32_t samples{};
+        bool same_device{};
+    } seen{};
 
     if (g_framework->get_renderer_type() == Framework::RendererType::D3D11) {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture{};
@@ -40068,6 +40080,8 @@ bool VRRenderTargetManager_Base::publish_scene_capture_target_snapshot(
                         expected_device != nullptr && resource_device.Get() == expected_device);
                 }
             }
+            seen = {static_cast<uint32_t>(desc.Format), desc.Width, desc.Height, desc.MipLevels, desc.ArraySize,
+                desc.SampleDesc.Count, expected_device != nullptr && resource_device.Get() == expected_device};
         }
     } else if (g_framework->get_renderer_type() == Framework::RendererType::D3D12) {
         Microsoft::WRL::ComPtr<ID3D12Resource> texture{};
@@ -40088,13 +40102,18 @@ bool VRRenderTargetManager_Base::publish_scene_capture_target_snapshot(
                 desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && bgra_compatible &&
                 desc.Width == expected_width && desc.Height == expected_height &&
                 desc.MipLevels == 1 && desc.DepthOrArraySize == 1 && desc.SampleDesc.Count == 1;
+            seen = {static_cast<uint32_t>(desc.Format), desc.Width, desc.Height, desc.MipLevels, desc.DepthOrArraySize,
+                desc.SampleDesc.Count, expected_device != nullptr && resource_device.Get() == expected_device};
         }
     }
 
     if (!resource_valid) {
         SPDLOG_WARNING_EVERY_N_SEC(
             2,
-            "[NativeStereoFix] Refusing to publish a scene-capture resource that does not match the active RHI/device/eye extent");
+            "[NativeStereoFix] Refusing to publish a scene-capture resource that does not match the active RHI/device/eye extent: "
+            "DXGI format={}, {}x{} (expected {}x{}), mips={}, array={}, samples={}, same_device={}",
+            seen.format, seen.width, seen.height, expected_width, expected_height,
+            seen.mips, seen.array, seen.samples, seen.same_device);
         return false;
     }
 
@@ -42217,6 +42236,29 @@ void VRRenderTargetManager_Base::prepare_nascar_native_target(uintptr_t instance
     }
 }
 
+void VRRenderTargetManager_Base::hold_off_scene_capture_retry() {
+    // Each attempt spawns a capture actor and a full-size render target on the
+    // game thread, then retries the publication on the render thread every
+    // frame for up to 2 s, so a capture that keeps failing is retried less and
+    // less often.
+    const auto failures = scene_capture_failed_generations.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto delay_ms = SCENE_CAPTURE_FAILED_RETRY_DELAY_MS
+        << std::min<uint32_t>(failures - 1, SCENE_CAPTURE_FAILED_RETRY_MAX_DOUBLINGS);
+
+    if (failures == 3) {
+        SPDLOG_WARN("[NativeStereoFix] The scene capture failed {} times in a row; Native Stereo Fix has no second "
+                    "view until one publishes. Retrying with a growing wait, up to {} s",
+                    failures, (SCENE_CAPTURE_FAILED_RETRY_DELAY_MS << SCENE_CAPTURE_FAILED_RETRY_MAX_DOUBLINGS) / 1000);
+    }
+
+    scene_capture_retry_after_ms.store(steady_clock_milliseconds() + delay_ms, std::memory_order_release);
+}
+
+void VRRenderTargetManager_Base::reset_scene_capture_retry() {
+    scene_capture_failed_generations.store(0, std::memory_order_release);
+    scene_capture_retry_after_ms.store(0, std::memory_order_release);
+}
+
 bool VRRenderTargetManager_Base::create_scene_capture() try {
     if (uevr::nascar::is_target()) { return false; }
     if (steady_clock_milliseconds() <
@@ -42288,9 +42330,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
             return;
         }
 
-        scene_capture_retry_after_ms.store(
-            steady_clock_milliseconds() + SCENE_CAPTURE_FAILED_RETRY_DELAY_MS,
-            std::memory_order_release);
+        hold_off_scene_capture_retry();
 
         in_flight_target = nullptr;
         in_flight_scene_capture_generation = 0;
@@ -42489,7 +42529,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
             return;
         }
 
-        SPDLOG_INFO("[FRenderTarget] Hooking FRenderTarget!");
+        SPDLOG_INFO_EVERY_N_SEC(2, "[FRenderTarget] Hooking FRenderTarget!");
 
         auto& vtable = *(void**)frt;
         memcpy(original_frender_target_vtable.data(), vtable, original_frender_target_vtable.size() * sizeof(uintptr_t));
@@ -42502,7 +42542,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
 
             original_frender_target_vtable[*display_gamma_index] = (uintptr_t)gamma_increase_fn;
             vtable = original_frender_target_vtable.data();
-            SPDLOG_INFO("[FRenderTarget] Hooked FRenderTarget!");
+            SPDLOG_INFO_EVERY_N_SEC(2, "[FRenderTarget] Hooked FRenderTarget!");
         } else {
             SPDLOG_WARN("[FRenderTarget] Gamma index not found, can't hook!");
         }
@@ -42517,9 +42557,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
     this->in_flight_scene_capture_generation = generation;
 
     const auto fail_generation = [this, generation]() {
-        scene_capture_retry_after_ms.store(
-            steady_clock_milliseconds() + SCENE_CAPTURE_FAILED_RETRY_DELAY_MS,
-            std::memory_order_release);
+        hold_off_scene_capture_retry();
 
         GameThreadWorker::get().enqueue([this, generation]() {
             if (generation != scene_capture_generation.load(std::memory_order_acquire) ||
@@ -42722,24 +42760,27 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
 
                     sdk::FRenderTarget::update_offsets(frt);
                     if (use_stalker2_capture_layout) {
-                        SPDLOG_INFO(
+                        SPDLOG_INFO_EVERY_N_SEC(
+                            2,
                             "[Stalker2][UE5.5][NativeStereoFix] Committed validated capture layout PrivateResource=0x110 TextureRHI=0x10 FRenderTarget=0x50");
                     } else if (use_bodycam_capture_layout) {
-                        SPDLOG_INFO(
+                        SPDLOG_INFO_EVERY_N_SEC(
+                            2,
                             "[Bodycam][UE5.5.4][NativeStereoFix] Committed validated capture layout PrivateResource=0x110 TextureRHI=0x10 FRenderTarget=0x50");
                     } else {
-                        SPDLOG_INFO(
+                        SPDLOG_INFO_EVERY_N_SEC(
+                            2,
                             "[StormEscape][UE5.6.1][NativeStereoFix] Committed validated capture layout PrivateResource=0x120 TextureRHI=0x10 FRenderTarget=0x50");
                     }
                 }
             } else {
                 if (!already_updated) {
                     if (!sdk::UTexture::update_render_resource_offset_texture2d(tgt)) {
-                        SPDLOG_WARN("Waiting for scene-capture render-resource offset discovery...");
+                        SPDLOG_WARNING_EVERY_N_SEC(2, "Waiting for scene-capture render-resource offset discovery...");
                         return false;
                     }
 
-                    SPDLOG_INFO("Successfully updated render resource offset for scene capture target!");
+                    SPDLOG_INFO_EVERY_N_SEC(2, "Successfully updated render resource offset for scene capture target!");
                 }
 
                 rsrc = reinterpret_cast<sdk::FTextureRenderTargetResource*>(tgt->get_resource());
@@ -42748,7 +42789,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
                 }
 
                 if (!already_updated && !sdk::FTextureRenderTargetResource::update_render_target_vtable_offset(rsrc)) {
-                    SPDLOG_WARN("Waiting for scene-capture FRenderTarget vtable discovery...");
+                    SPDLOG_WARNING_EVERY_N_SEC(2, "Waiting for scene-capture FRenderTarget vtable discovery...");
                     return false;
                 }
 
@@ -42764,7 +42805,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
                 auto* const texture_ref = frt->get_render_target_texture();
                 rhi_texture = texture_ref != nullptr ? *texture_ref : nullptr;
                 if (rhi_texture == nullptr) {
-                    SPDLOG_WARN("Waiting for scene capture render target texture to be valid...");
+                    SPDLOG_WARNING_EVERY_N_SEC(2, "Waiting for scene capture render target texture to be valid...");
                     return false;
                 }
             }
@@ -42841,6 +42882,7 @@ bool VRRenderTargetManager_Base::create_scene_capture() try {
                 in_flight_target = nullptr;
                 in_flight_scene_capture_generation = 0;
                 scene_capture_retry_after_ms.store(0, std::memory_order_release);
+                scene_capture_failed_generations.store(0, std::memory_order_release);
                 SPDLOG_INFO("Scene capture texture fully created for generation {}!", generation);
             });
 
