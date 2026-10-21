@@ -339,6 +339,9 @@ public:
 
     bool create_scene_capture();
     void destroy_scene_capture();
+    // Forgets earlier failed scene-capture generations, so the next request is
+    // not held back by them.
+    void reset_scene_capture_retry();
 
     sdk::UTexture* get_scene_capture_utexture();
     
@@ -375,6 +378,9 @@ protected:
     std::atomic_bool ue58_ui_initialization_enabled{};
 
     uint64_t invalidate_scene_capture_generation(const char* reason);
+    // Counts a failed scene-capture generation and holds off the next attempt:
+    // 0.5 s, then 1, 2 and 4 s while generations keep failing.
+    void hold_off_scene_capture_retry();
     bool publish_scene_capture_target_snapshot(
         sdk::UTexture* owner_texture,
         FRHITexture2D* rhi_texture,
@@ -513,6 +519,7 @@ protected:
     std::atomic_bool scene_capture_destruction_requested{};
     std::atomic<uint64_t> scene_capture_request_serial{};
     std::atomic<uint64_t> scene_capture_retry_after_ms{};
+    std::atomic<uint32_t> scene_capture_failed_generations{}; // since the last published one or reset_scene_capture_retry()
     sdk::UObjectReference<sdk::UTexture> dedicated_ui_texture{nullptr};
     sdk::UTexture* in_flight_dedicated_ui_texture{nullptr};
     std::unique_ptr<FTexture2DRHIRef> owned_dedicated_ui_target{};
